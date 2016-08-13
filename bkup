@@ -1,0 +1,839 @@
+#!/bin/bash
+
+pidfile=/var/run/bkup.pid		# PID file for running process
+pid=""					# For /var/run/pidfile pid value
+timestamp=""				# For /var/run/pidfile timestamp
+
+debugmode=1				# Debug mode flag 0 = off, 1 = on
+operation=0				# Operation (0=Backup, 1=Restore)
+mode=tar				# Mode (tar, dd)
+maxlevel=7				# Maximum Backup Level
+forcelevel=-1				# Force Level Backup, -1 means ignore, 0 means full, 1...maxlevel means specified increment
+imterm=0				# Immediate Terminate if previous job is still running
+jobname="none"				# Job name
+bkupPath=/srv/backup			# Where to back stuff up to
+src=""					# Source folder, file or device
+media=/dev/dvd				# Recordable Media Device
+
+# Jobs
+declare -A jobs
+
+# Excludes
+#
+# When a path other then root is provided, you must begin all excludes with "^\./",
+# to indicate an absolute path from the root of the given path. Otherwise, you
+# likely to experience some files being excluded that should not have been (or not
+# at all).
+
+declare -a defaultExcludes
+declare -a excludes
+
+# Default Excludes
+readarray defaultExcludes<<eof
+^/$
+^\./$
+^\.$
+lost\\\\+found$
+eof
+
+#
+# Functions
+#
+
+# Usage
+function Usage()
+{
+	# Tested 8/1/2016
+
+	echo -e "Backup Script"
+	echo -e "============================="
+	echo -e "Backup or Restore command with jobname to run"
+	echo -e "bkup [flags] [operation] [jobname] [[operation] [jobname] | [jobname]] ..."
+	echo -e "bkup -h\t\t\t\tThis menu"
+	echo -e "bkup -l\t\t\t\tList current backups"
+	echo -e "bkup -x\t\t\t\tReset running instance flag"
+	echo -e "bkup -i\t\t\t\tTerminate immediately if another instance is running"
+	echo -e "bkup -d\t\t\t\tSet Destination (backup) folder path"
+	echo -e "bkup -s\t\t\t\tSet Source folder path"
+	echo -e "bkup -t [jobname]\t\tList contents of supplied backup archive"
+	echo -e "bkup -m [level]\t\t\tSet backup cycle's max level, default is 7"
+	echo -e ""
+	echo -e "Operation can be..."
+	echo -e "Backup\t\t0|backup|-b"
+	echo -e "Restore\t\t1|restore|rest|-r"
+	echo -e ""
+	echo -e "o You can place a new operation before each job name, if you do not,"
+	echo -e "o the last listed operation is used. If no operation is given, a backup is assumed."
+	echo -e "o Backups cycle automatically between levels, starting with a full backup."
+	echo -e "o Empty incrementals are deleted automatically."
+	echo -e ""
+
+	exit 0
+}
+
+# List Current Backups
+function List()
+{
+	NotTestedYet
+
+	for job in ${bkupPath}/*; do
+		if [ -d "${job}" -a -e "${job}/timestamp" ]; then
+			jobname=`basename ${job}`
+			for ((level=0; level < ${maxlevel}; ++level)); do
+				if [ -e ${job}/${jobname}${level}.tar.gz ]; then
+					info=`ls -lh ${job}/${jobname}${level}.tar.gz | cut -d" " -f5-`
+
+					if [ ${level} = 0 ]; then
+						echo -e "Full : ${info}"
+					else
+						echo -e "\tIncremental : ${info}"
+					fi
+				fi
+			done
+		fi
+	done
+
+	exit 0
+}
+
+# ToFile
+# Input Parameters : filename msg|at-here-doc
+function ToFile()
+{
+	deleteFlag=0
+
+	if [ "$1" = "default" -o "$1" = "random" -o "$1" = "*" ]; then
+		fname="/tmp/tofile.${RANDOM}"
+		deleteFlag=1
+	else
+		fname="$1"
+	fi
+
+	if [ "$2" = "" ]; then
+		while read line; do
+			echo -e "${line}" >> ${fname}
+		done
+	else
+		echo -e "$2" >> ${fname}
+	fi
+
+	if [ ${deleteFlag} = 1 ]; then rm ${fname}; fi
+}
+
+# Combine Files and Email
+# Input Parameters : user subject [file1] [file2] ... [fileN]
+function CombineAndEmail()
+{
+	tmp=/tmp/combine.${RANDOM}
+
+	subject="$2"
+	towho="$1"
+
+	shift 2
+
+	while [ ! "$1" = "" ]; do
+		cat ${1} >> ${tmp}
+		echo -e "\n" >> ${tmp}
+
+		shift 1
+	done
+
+	SendEmail "${towho}" "${subject}" ${tmp}
+
+	rm ${tmp}
+}
+
+# SendEmail
+# Input Parameters : to subject msg|file
+function SendEmail()
+{
+	NotYetTested
+
+	TMPFILE=/tmp/tt.${RANDOM}
+
+	if [ -f "$3" ]; then
+		mailx -s "$2" $1 < $3
+	else
+		echo -e "$3" > ${TMPFILE}
+
+		mailx -s "$2" $1 < ${TMPFILE}
+
+	fi
+
+	[ -e ${TMPFILE} ] && rm ${TMPFILE}
+}
+
+# BlankMedia : Erase recordable/rewriteable media
+# Input Params : device
+function BlankMedia()
+{
+	NotYetTested
+
+	dvd+rw-format -blank $1
+}
+
+# BurnImage : Burn ISO Image to recordable media
+# Input Params : device imgfile
+function BurnImage()
+{
+	NotYetTested
+
+	growisofs -dvd-compat -Z $1=$2
+}
+
+# MakeISOImage : Make ISO Image for burning
+# Input Parameters : outfname srcfolder
+function MakeISOImage()
+{
+	NotYetTested
+
+	genisoimage -r -J -o $1 $2
+}
+
+# BurnFiles : Burn files directly to recordable media
+# Input Params : device srcfolder
+function BurnFiles()
+{
+	NotYetTested
+
+	growisofs -Z $1 -r -J $2
+}
+
+# AddFiles : Add files to recordable multi-session media
+# Input Params : device srcfolder
+function AddFiles()
+{
+	NotYetTested
+
+	growisofs -M $1 -r -J $2
+}
+
+# CheckSpace : Check Compare Space Available on Recordable Media to the total space required by files about to be burned
+# Input Params : device srcFolder
+function CheckSpace()
+{
+	NotYetTested
+
+	fsstr=$(dvd+rw-mediainfo $1 | grep "Free Blocks" | cut -d":" -f 2)
+	multiple=$(echo ${fsstr} | cut -d"*" -f2)
+	# Until I figure out something here, cheat, the multiples are almost always 2K
+	multiple=2048
+	space=$(echo ${fsstr} | cut -d"*" -f1)
+
+	freespace=$(( ${space} * ${multiple} ))
+
+	pushd $2
+
+	tmpfile=/tmp/tmp.${RANDOM}
+
+	find . --type f -print > ${tmpfile}
+
+	while read line; do
+		filesize=$(du -b ${line} | cut -d" " -f1)
+
+		freespace=$(( ${freespace} - ${filesize} ))
+	done < ${tmpfile}
+
+	rm ${tmpfile}
+	popd
+
+	if [ ${freespace} -ge 0 ]; then
+		return 0
+	else
+		echo -e ">>> Free space on $1, files require more space then is available, ${freespace}"
+	fi
+
+	return 127
+}
+
+# Get Listing : Get Listing of files in archive
+# Input Params : basename level [output file]
+function GetListing()
+{
+	[ ${debugmode} = 0 ] && echo -e "XXX GetListing... $1 $2 ($3)"
+
+	# Tested 8/7/2016
+
+	for ((level=0; level < ${maxlevel}; ++level)); do
+		if [ "$2" = "a" -o $2 = ${level} ]; then
+			if [ -e ${bkupPath}/$1/$1${level}.tar.gz ]; then
+				if [ ${level} = 0 ]; then
+					msg="Full Backup\n==========="
+				else
+					msg="Incremental ${level}\n==========="
+				fi
+
+				if [ "$3" = "" ]; then
+					echo -e "${msg}"
+					tar tzvf ${bkupPath}/$1/$1${level}.tar.gz
+				else
+					echo -e "${msg}" >> $3
+					tar tzvf ${bkupPath}/$1/$1${level}.tar.gz >> $3
+				fi
+			fi
+		fi
+	done
+}
+
+# Not Implemented Yet Message
+function NotImplementedYet()
+{
+	# Tested 7/31/2016
+	echo -e "*** Not Implemented Yet"
+}
+
+# Because I'm Forgetful
+function NotYetImplemented()
+{
+	NotImplementedYet
+}
+
+# Not Yet Tested Message
+function NotYetTested()
+{
+	# Tested 7/31/2016
+	echo -e "*** Not Yet Tested"
+}
+
+# Because I'm Forgetful
+function NotTestedYet()
+{
+	NotYetTested
+}
+
+# Wait For Previous : If previous backup is running, wait (sort of)
+# No Input
+function WaitForPrevious()
+{
+	NotYetTested
+
+	badmojo=false
+
+	if [ -e ${pidfile} ]; then
+		[ ${debugmode} = 1 ] && echo -e "XXX Previous backup job file exists..."
+
+		ExtractRunInfo
+
+		LiveProcess ${pid}
+
+		if [ $? = 0 ]; then
+			# Process does not exist, clear out flag
+			RemoveRun
+		elif [ ${imterm} = 0 ]; then
+			# Process does exist, start sleep mode
+			[ ${debugmode} = 1 ] && echo -e "XXX Waiting"
+
+			count=0
+			waitflag=yes
+			while [ "${waitflag}" = "yes" -a ${badmojo} = false ]; do
+				sleep 15m
+
+				LiveProcess ${pid}
+
+				[ $? = 0 ] && waitflag="no"
+
+				count=$(( ${count} + 1))
+
+				if [ ${count} -gt 22 ]; then
+					badmojo=true
+				fi
+			done
+
+			[ ${badmojo} = true ] && return 127
+		else
+			[ ${debugmode} = 1 ] && echo -e "XXX Terminating now"
+			return 127
+		fi
+	fi
+
+	return 0
+}
+
+# Is Process Still Active
+# Input Params : pid
+# Output : 0 = not found, 1 = found
+function LiveProcess()
+{
+	# Tested 8/3/2016
+
+	[ ${debugmode} = 1 ] && echo -e "XXX Checking for Live Previous Backup Job"
+
+	ps -p $1 | grep $1 >> /dev/null
+
+	if [ $? = 0 ]; then
+		[ ${debugmode} = 1 ] && echo -e "XXX Previous backup job *IS* running"
+
+		return 1
+	fi
+
+	[ ${debugmode} = 1 ] && echo -e "XXX Previous backup job *IS NOT* running"
+
+	return 0
+}
+
+# Create Run File
+function CreateRun()
+{
+	# Tested 8/3/2016
+
+	[ ${debugmode} = 1 ] && echo -e "XXX Creating Run File"
+
+	echo "${BASHPID} `date`" > ${pidfile}
+}
+
+# Extract Info From Run Lock
+function ExtractRunInfo()
+{
+	# Tested 8/3/2016
+
+	[ ${debugmode} = 1 ] && echo -e "XXX Extracting previous job info"
+
+	pid=`cat ${pidfile} | cut -d" "  -f1`
+	timestamp=`cat ${pidfile} | cut -d" " -f2-`
+}
+
+# Remove Run Lock
+function RemoveRun()
+{
+	# Tested 8/3/2016
+
+	[ ${debugmode} = 1 ] && echo -e "XXX Removing previous run file"
+
+	for tmpfile in /tmp/include*.${pid} /tmp/tmpexclude*.${pid} /tmp/exclude*.${pid}; do
+		[ -e ${tmpfile} ] && rm ${tmpfile}
+	done
+
+	[ -e ${pidfile} ] && rm ${pidfile}
+}
+
+# CheckArchiveSize : Check to see if archive's file size is larger then value
+# Input Param : filename size-in-bytes
+function CheckArchiveSize()
+{
+	[ ${debugmode} = 1 ] && echo -e "XXX CheckArchiveSize : $1 ($2)"
+
+	# Tested 8/7/2016
+
+	if [ -e $1 ]; then
+		fsize=$(wc -c $1 | cut -d" " -f1)
+
+		if [ ${fsize} -lt $2 ]; then
+			[ ${debugmode} = 1 ] && echo -e "XXX $1 is smaller then $2"
+
+			ls -al $1
+
+			return 127;
+		fi
+	else
+		[ ${debugmode} = 1 ] && echo -e "XXX $1 does not exist"
+
+		return 127
+	fi
+
+	return 0
+}
+
+# Reset Backup : Reset State of Backup (ie remove all incrementals and fulls, plus timestamps)
+# Input Param : basename level
+function ResetBackup()
+{
+	[ ${debugmode} = 1 ] && echo -e "XXX ResetBackup : $1"
+
+	# Tested 8/7/2016
+
+	if [ "$2" = "" ]; then
+		for item in ${bkupPath}/$1/*.gz ${bkupPath}/$1/timestamp; do
+			[ -e ${item} ] && rm ${item}
+		done
+	else
+		for ((level=0; level < ${maxlevel}; ++level)); do
+			if [ ${level} -ge $2 ]; then
+				[ -e ${bkupPath}/$1/$1${level}.tar.gz ] && rm ${bkupPath}/$1/$1${level}.tar.gz
+				[ ${level} = 0 ] && rm ${bkupPath}/$1/timestamp
+			fi
+		done
+	fi
+}
+
+# Check Backup Cycle : Check for max incremental and reset if needed
+# Input Param : basename
+function CheckBackupCycle()
+{
+	[ ${debugmode} = 1 ] && echo -e "XXX CheckBackupCycle : $1"
+
+	# Tested 8/7/2016
+
+	previouslevel=$(( ${maxlevel} - 1 ))
+
+	if [ -e ${bkupPath}/$1/$1${previouslevel}.tar.gz ]; then
+		ResetBackup $1
+	fi
+}
+
+# Array To File
+# Input Param: [append] filename array1 array2...
+function ArrayToFile()
+{
+	# Tested 8/1/2016
+
+	filename=$1
+	shift 1
+
+	while [ ! "$1" = "" ]; do
+		echo "$1" >> ${filename}
+		shift 1
+	done
+}
+
+# Exclude Files from file or Input
+# Input Params : src excludefile [outputfile]
+# Source can be "-" for stdin, if no output file is given, passed filtered data to stdout
+function Exclude()
+{
+	# Tested 8/3/2016
+
+	[ ${debugmode} = 1 ] && echo -e "XXX Excluding some items... $1, $2, $3"
+
+	if [ "$3" = "" ]; then
+		# To Stdout
+		egrep -v -f $2 $1
+	else
+		# To file
+		egrep -v -f $2 $1 > $3
+	fi
+}
+
+# Restore
+# Input Params: basename srcFolder
+function Restore()
+{
+	NotYetTested
+
+	[ ${debugmode} = 1 ] && echo -e "XXX Restore : basename=$1, srcFolder=$2"
+
+	if [ ! -e "$2" ]; then
+		mkdir "$2"
+	fi
+
+	pushd $2 >> /dev/null
+
+	# Restore In Order
+	for ((postfix=0; postfix < ${maxlevel}; ++postfix)); do
+		if [ -e ${bkupPath}/$1/$1${postfix}.tar.gz ]; then
+			tar xzvf ${bkupPath}/$1/$1${postfix}.tar.gz
+		fi
+	done
+
+	popd >> /dev/null
+}
+
+# Backup Item
+# Input Params: basename srcFolder forcelevel
+function Backup()
+{
+	[ ${debugmode} = 1 ] && echo -e "XXX Backup : $1 $2 ($3)"
+
+	NotYetTested
+
+	if [ ${mode} = iso ]; then
+		BurnFiles ${media} $2
+		return $?
+	fi
+
+	pushd $2 >> /dev/null
+
+	include=/tmp/include${RANDOM}.${BASHPID}
+	exclude="/tmp/exclude${RANDOM}.${BASHPID}"
+	basename=$1
+	basefolder=${bkupPath}/${basename}
+	timestamp=${basefolder}/timestamp
+	archive=${basefolder}/${basename}
+	postfix=".tar.gz"
+	ddpostfix="img.gz"
+	timeoutput=/tmp/timeoutput.${RANDOM}
+
+	# Create Base Folder, if it does not exist
+	if [ ! -e ${basefolder} ] ; then mkdir -p ${basefolder}; fi
+
+	if [ ! "$3" = "" ]; then
+		ResetBackup ${basename} $3
+	else
+		CheckBackupCycle $1
+	fi
+
+	# Default Excludes
+	ArrayToFile ${exclude} ${excludes[@]}
+
+	for ((level=0; level < ${maxlevel}; ++level)); do
+		if [ "${mode}" = "dd" ]; then
+			target=${archive}${level}${ddpostfix}
+		else
+			target=${archive}${level}${postfix}
+		fi
+
+		if [ ! -e ${target} ]; then
+			if [ ${level} = 0 ]; then
+				# Full Backup
+				[ ${debugmode} = 1 ] && echo -e "XXX Full Backup"
+
+				ResetBackup
+
+				touch ${timestamp}
+
+				echo -e "Path : ${target}"
+
+				logger -p syslog.info -t bkup "Full backup ${basename} started on $(date)"
+
+				case "${mode}" in
+				"tar")
+					'time' -f "Elapsed %E" -o ${timeoutput} find . -print | egrep -v -f ${exclude} | tar --no-recursion --atime-preserve -czvf ${target} -T -
+					;;
+				"dd")
+					'time' -f "Elapsed %E" -o ${timeputput} dd if=${src} | gzip > ${target}
+					;;
+				"mysql")
+					'time' -f "Elapsed %E" -o ${timeoutput} MySqlBackup ${target}
+					;;
+				esac
+
+				SendEmail ejohnfelt "Backup completed $(date)" ${timeoutput}
+
+				logger -p syslog.info -t bkup "Full backup ${basename} completed on $(date)"
+
+				[ -e ${timeoutput} ] && rm ${timeoutput}
+
+				break
+			elif [ ${level} -gt 0 -a "${mode}" = "tar" ]; then
+				# Incremental
+				[ ${debugmode} = 1 ] && echo -e "XXX Incremental Backup"
+
+				logger -p syslog.info -t bkup "Incremental backup ${basename} started on $(date)"
+
+				'time' -f "Elapsed %E" -o ${timeoutput} find . -newer ${timestamp} -print | egrep -v -f ${exclude} | tar --no-recursion --atime-preserve -czvf ${target} -T -
+
+				# Update timestamp so that we don't end up with ever growing incremental bloat
+				touch ${timestamp}
+
+				tfile="/tmp/tmp.${RANDOM}"
+
+				# Check for empty incremental
+				CheckArchiveSize ${target} 46
+
+				if [ ! $? = 0 ]; then
+					[ -e ${target} ] && rm ${target}
+
+					msg="Incremental backup ${basename} (Level : ${level}) was removed because it was empty or there were no new files"
+					logger -p syslog.info -t bkup "${msg}"
+
+					ToFile ${tfile} "${msg}"
+
+					CombineAndEmail ejohnfelt "${basename}, no new files" ${tfile} ${timeoutput}
+				else
+					msg="Incremental backup ${basename} (Level : ${level}) completed"
+					logger -p syslog.info -t bkup "${msg}"
+
+					ToFile ${tfile} "${msg}"
+
+					CombineAndEmail ejohnfelt "${basename} Incremental backup completed on $(date)" ${tfile} ${timeoutput}
+				fi
+
+				[ -e ${timeoutput} ] && rm ${timeoutput}
+
+				break
+			fi
+		elif [ ${level} -gt 1 -a -e ${target} ]; then
+			# Here we check for incrementals that are out of sequence (that is, they older then the previous backup)
+			# If found, we delete it and start at this level to create fresh one.
+			previous=$(( ${level} - 1 ))
+
+			if [ ${target} -ot ${archive}${previous}${postfix} ]; then
+				rm ${target}
+				level=$(( ${level} - 1 ))
+			fi
+		fi
+	done
+
+	# Remove Include and Instant Exclude File
+	[ -e ${include} ] && rm ${include}
+	[ "$3" = "" ] && rm ${exclude}
+
+	popd >> /dev/null
+}
+
+# LoadJobProfile : Load Backup Job Profile
+# Input Parameter : filename operation
+function LoadJobProfile()
+{
+	[ ${debugmode} = 1 ] && echo -e "XXX LoadJobProfile : $1 $2"
+
+	NotYetTested
+
+	if [ -e $1 ]; then
+		forcelevel=""
+		unset excludes[*]
+
+		for ((index=0; index < ${#defaultExcludes[@]}; ++index)); do
+			excludes[${index}]=${defaultExcludes[${index}]}
+		done
+
+		count=${#excludes[@]}
+
+		while read line; do
+			cmd=$(echo ${line} | cut -d" " -f1)
+			args=$(echo ${line} | cut -d" " -f2)
+
+			case ${cmd} in
+			"jobname"|"name")	# Job name (or, basename)
+				jobname=${args}
+				;;
+			"mode")			# Mode is either "tar" or "dd" to indicate type of backup
+				mode=${args}
+				;;
+			"maxlevel")		# Sets the maximum number of incrementals in the cycle
+				maxlevel=${args}
+				;;
+			"terminate")		# Immediate terminate on idle flag
+				imterm=${args}
+				;;
+			"dest")			# Where backups go
+				bkupPath=${args}
+				;;
+			"src")			# What to backup
+				src=${args}
+				;;
+			"media")		# Recordable Media
+				media=${args}
+				;;
+			"exclude")		# Add Excludes
+				excludes[${count}]="${args}"
+				count=$(( ${count} + 1 ))
+				;;
+			"operation")
+				operation=${args}
+				;;
+			"forcelevel")		# Force a level backup
+				forcelevel=${args}
+				;;
+			esac
+		done < $1
+	else
+		echo -e "Job Profile, $1, does not exist, or is not where you think it should be"
+		return 127
+	fi
+
+	if [ $2 = 0 ]; then
+		echo -e "XXX ${jobname}"
+		Backup ${jobname} ${src} ${forcelevel}
+	else
+		Restore ${jobname}
+	fi
+
+	return 0
+}
+
+# MySql Backups
+# Input Parameters : target
+function MySqlBackup()
+{
+	[ ${debugmode} = 1 ] && echo -e "XXX MySql Backup : $1"
+
+	NotYetTested
+
+	NotImplementedYet
+}
+
+#
+# Main Loop
+#
+
+jobcount=0
+
+while [ ! "$1" = "" ]; do
+	case $1 in
+	"0"|"backup"|"-b")		# Set Backup Operation
+		operation=0 ;;
+	"1"|"restore"|"rest"|"-r")	# Set Restore Operation
+		operation=1 ;;
+	"-h")	# Show help
+		Usage; exit 0 ;;
+	"-l")	# List backups
+		List; exit 0 ;;
+	"-x")	# Clear previous run
+		echo -e "Clearing previous run flag"; RemoveRun ; exit 0 ;;
+	"-i")	# Change Terminate on idle flag
+		imterm=1 ;;
+	"-m")	# Change Maxlevel
+		shift 1
+		maxlevel=$1
+		;;
+	"-d")	# Set Destination Path
+		bkupPath=$2
+		shift 1
+		;;
+	"-s")	# Set Source Folder Path
+		src=$2
+		shift 1
+		;;
+	"-t")	# Get Listing of files from backup archives
+		shift 1
+		if [ ! "$2" = "" ]; then
+			lvl=$2
+		else
+			lvl=a
+		fi
+		GetListing $1 ${lvl}
+		exit 0
+		;;
+	"test")
+		echo -e "Does nothing at the moment"
+		exit 0
+		;;
+	-*)	echo -e "Unrecognized command : $1"
+		;;
+	*)
+		[ ${debugmode} = 1 ] && echo -e "XXX Adding job : $1 / ${operation}"
+		jobs[${jobcount}]="$1 ${operation}"
+		jobcount=$(( ${jobcount} + 1 ))
+		;;
+	esac
+
+	shift 1
+done
+
+WaitForPrevious
+
+if [ $? = 127 -a ${imterm} = 0 ]; then
+	TMPFILE=/tmp/tmp/${RANDOM}
+	ToFile ${TMPFILE} <<eof
+Hi Eric,
+
+A backup job from a previous run with PID=${pid} and started on ${timestamp}
+appears to have exceeded its 23hr limit. Please check it
+
+Sincerely,
+Yourself
+eof
+
+	SendEmail "Backup job stuck" ejohnfelt ${TMPFILE}
+
+	rm ${TMPFILE}
+
+	exit 127;
+elif [ $? = 127 -a ${imterm} = 1 ]; then
+	echo -e "Another job is still running, pid=${pid} and launched on ${timestamp}"
+	exit 127;
+fi
+
+CreateRun
+
+if [ ${jobcount} -gt 0 ]; then
+	# Execute Jobs
+	for index in ${!jobs[@]}; do
+		[ ${debugmode} = 0 ] && echo -e "XXX Executing ${index} ${jobs[${index}]}"
+		eval "LoadJobProfile ${jobs[${index}]}"
+	done
+else
+	echo -e "*** No jobs supplied as arguments, stop wasting my time!"
+fi
+
+RemoveRun
