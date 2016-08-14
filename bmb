@@ -1,6 +1,6 @@
 #!/bin/bash
 
-version="20160814-1"
+version="20160814-2"
 
 PATH=${PATH}:/usr/bin
 
@@ -54,8 +54,8 @@ function ShowVersion()
 # Input Parameter : None
 function MakeLock()
 {
-	if [ ! -e ${nfspath}/${lock} ]; then
-		touch ${nfspath}/${lock} > /dev/null
+	if [ ! -e ${localmnt}/${lock} ]; then
+		touch ${localmnt}/${lock} > /dev/null
 	fi
 }
 
@@ -63,13 +63,13 @@ function MakeLock()
 # Input Parameters : None
 function ClearLock()
 {
-	[ -e ${nfspath}/${lock} ] && rm ${nfspath}/${lock} > /dev/null
+	[ -e ${localmnt}/${lock} ] && rm ${localmnt}/${lock} > /dev/null
 }
 
 # WaitLock : Wait for backup lock to clear
 function WaitLock()
 {
-	if [ -e ${nfspath}/${lock} -a ! "${lockwait}" = "0" ]; then
+	if [ -e ${localmnt}/${lock} -a ! "${lockwait}" = "0" ]; then
 		sleep ${lockwait}
 	fi
 }
