@@ -15,6 +15,8 @@ nfspath=""
 localmnt="/mnt"
 archive="baremetal.img.gz"
 remotelog=""
+lock="bmb.lock"
+lockwait=0
 
 #
 # Functions
@@ -34,12 +36,42 @@ function Usage()
 	echo -e "-m [mnt]\tLocal mount point"
 	echo -e "-a [name]\tName of archive to create"
 	echo -e "-r [host]\tRemote log host"
+	echo -e "-w [time]\tWait for lock"
 	echo -e "-v\t\tShow version"
+	echo -e " "
+	echo -e "A lock wait is more or less a pause for time given, ultimately, locks are ignored."
+	echo -e "You enable a lock, merely by setting the wait time."
 }
 
+# Show Verion Information
+# Input Parameters : None
 function ShowVersion()
 {
 	echo -e "Bare Metal Backup : ${version}"
+}
+
+# MakeLock : Make lock
+# Input Parameter : None
+function MakeLock()
+{
+	if [ ! -e ${nfspath}/${lock} ]; then
+		touch ${nfspath}/${lock} > /dev/null
+	fi
+}
+
+# Clear Lock : Clear a Lock
+# Input Parameters : None
+function ClearLock()
+{
+	[ -e ${nfspath}/${lock} ] && rm ${nfspath}/${lock} > /dev/null
+}
+
+# WaitLock : Wait for backup lock to clear
+function WaitLock()
+{
+	if [ -e ${nfspath}/${lock} -a ! "${lockwait}" = "0" ]; then
+		sleep ${lockwait}
+	fi
 }
 
 # CheckRoot
@@ -74,6 +106,8 @@ function LoadProfile()
 			archive="${data}" ;;
 		"remote")		# Remote Log Host
 			remotelog="${data}" ;;
+		"wait")			# Lock Wait Time
+			lockwait="${data}" ;;
 		esac
 	done < $1
 }
@@ -185,6 +219,9 @@ while [ ! "$1" = "" ]; do
 	"-v")	# Show Version
 		ShowVersion
 		exit 0 ;;
+	"-w")	# Wait for Lock
+		lockwait="$2"
+		shift 1 ;;
 	esac
 
 	shift 1
@@ -192,12 +229,18 @@ done
 
 CheckRoot
 
+WaitLock
+
 if [ $? = 0 ]; then
+	[ ! "${lockwait}" = "0" ] && CreateLock
+
 	for profile in ${profiles[@]}; do
 		LoadProfile ${profile}
 
 		BareMetalBackup
 	done
+
+	[ ! "${lockwait}" = "0" ] && ClearLock
 else
 	echo -e "You must be root to run this script, you are ${LOGNAME}"
 fi
