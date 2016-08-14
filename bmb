@@ -229,18 +229,20 @@ done
 
 CheckRoot
 
-WaitLock
-
 if [ $? = 0 ]; then
-	[ ! "${lockwait}" = "0" ] && MakeLock
 
 	for profile in ${profiles[@]}; do
+
 		LoadProfile ${profile}
 
-		BareMetalBackup
-	done
+		WaitLock
 
-	[ ! "${lockwait}" = "0" ] && ClearLock
+		[ ! "${lockwait}" = "0" ] && MakeLock
+
+		BareMetalBackup
+
+		[ ! "${lockwait}" = "0" ] && ClearLock
+	done
 else
 	echo -e "You must be root to run this script, you are ${LOGNAME}"
 fi
