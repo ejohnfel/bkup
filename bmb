@@ -1,6 +1,6 @@
 #!/bin/bash
 
-version="20160814-0"
+version="20160814-1"
 
 PATH=${PATH}:/usr/bin
 
@@ -232,7 +232,7 @@ CheckRoot
 WaitLock
 
 if [ $? = 0 ]; then
-	[ ! "${lockwait}" = "0" ] && CreateLock
+	[ ! "${lockwait}" = "0" ] && MakeLock
 
 	for profile in ${profiles[@]}; do
 		LoadProfile ${profile}
