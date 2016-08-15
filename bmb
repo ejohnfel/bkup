@@ -1,6 +1,7 @@
 #!/bin/bash
 
-version="20160814-2"
+version="20160814-4"
+debugmode=0
 
 PATH=${PATH}:/usr/bin
 
@@ -55,7 +56,7 @@ function ShowVersion()
 function MakeLock()
 {
 	if [ ! -e ${localmnt}/${lock} ]; then
-		touch ${localmnt}/${lock} > /dev/null
+		touch ${localmnt}/${lock}
 	fi
 }
 
@@ -70,6 +71,7 @@ function ClearLock()
 function WaitLock()
 {
 	if [ -e ${localmnt}/${lock} -a ! "${lockwait}" = "0" ]; then
+		Log "Lock detected, waiting ${lockwait}"
 		sleep ${lockwait}
 	fi
 }
@@ -132,11 +134,15 @@ function MountNFS()
 		return 128
 	fi
 
-	mount -t nfs ${nfsmount} ${localmnt}
+	mount -t nfs ${nfsmount} ${localmnt} > /dev/null
 
-	if [ ! $? = 0 ]; then
-		return 127
-	fi
+	retval=$?
+
+	case ${retval} in
+	0)	return 0 ;;
+	32)	return 0 ;;
+	*)	return ${retval} ;;
+	esac
 
 	return 0
 }
@@ -155,6 +161,10 @@ function BareMetalBackup()
 	MountNFS
 
 	if [ $? = 0 ]; then
+		WaitLock
+
+		[ ! "${lockwait}" = "0" ] && MakeLock
+
 		if [ ! "${nfspath}" = "" ]; then
 			output="${localmnt}/${nfspath}/${archive}"
 		else
@@ -176,6 +186,8 @@ function BareMetalBackup()
 		rm ${tmpfile}
 
 		Log "Bare metal backup completed $(date) with runtime ${runtime} and was ${finalsize}"
+
+		[ ! "${lockwait}" = "0" ] && ClearLock
 
 		UMountNFS
 	else
@@ -235,13 +247,7 @@ if [ $? = 0 ]; then
 
 		LoadProfile ${profile}
 
-		WaitLock
-
-		[ ! "${lockwait}" = "0" ] && MakeLock
-
 		BareMetalBackup
-
-		[ ! "${lockwait}" = "0" ] && ClearLock
 	done
 else
 	echo -e "You must be root to run this script, you are ${LOGNAME}"
