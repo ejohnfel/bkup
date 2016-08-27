@@ -561,6 +561,8 @@ function Backup()
 		CheckBackupCycle $1
 	fi
 
+	tfile="/tmp/tmp.${RANDOM}"
+
 	# Default Excludes
 	ArrayToFile ${exclude} ${excludes[@]}
 
@@ -596,11 +598,14 @@ function Backup()
 					;;
 				esac
 
-				SendEmail ejohnfelt "Backup completed $(date)" ${timeoutput}
+				msg="Full backup ${basename} completed on $(date)"
+				logger -p syslog.info -t bkup "${msg}"
+				ToFile ${tfile} "${msg}"
 
-				logger -p syslog.info -t bkup "Full backup ${basename} completed on $(date)"
+				CombineAndEmail ejohnfelt "${basename} Backup Completed" ${tfile} ${timeoutput}
 
 				[ -e ${timeoutput} ] && rm ${timeoutput}
+				[ -e ${tfile} ] && rm ${tfile}
 
 				break
 			elif [ ${level} -gt 0 -a "${mode}" = "tar" ]; then
@@ -613,8 +618,6 @@ function Backup()
 
 				# Update timestamp so that we don't end up with ever growing incremental bloat
 				touch ${timestamp}
-
-				tfile="/tmp/tmp.${RANDOM}"
 
 				# Check for empty incremental
 				CheckArchiveSize ${target} 46
@@ -638,6 +641,7 @@ function Backup()
 				fi
 
 				[ -e ${timeoutput} ] && rm ${timeoutput}
+				[ -e ${tfile} ] && rm ${tfile}
 
 				break
 			fi
