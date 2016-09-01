@@ -31,6 +31,9 @@ operation 0
 # 1..maxlevel are increments)
 # forcelevel 0
 
+# Make Index of Archive After Creating Archive, stored as ${basefolder}/.index.${level}
+index false
+
 # Excludes (one per line, evaluated as regular expressions)
 # The program includes some default excludes, here you add what you want,
 # almost all backups will include "./" as the root of the targets backup,

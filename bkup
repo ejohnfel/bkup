@@ -14,6 +14,7 @@ jobname="none"				# Job name
 bkupPath=/srv/backup			# Where to back stuff up to
 src=""					# Source folder, file or device
 media=/dev/dvd				# Recordable Media Device
+mkindex=false				# Make Post Index File
 
 # Jobs
 declare -A jobs
@@ -69,6 +70,21 @@ function Usage()
 	echo -e ""
 
 	exit 0
+}
+
+# Warning Message : A Backup is still running
+# Input Parameters: [outputfile] [pid] [timestamp]
+function Warning_StillRunningMsg()
+{
+	cat > $1 <<eof
+Hi Eric,
+
+A backup job from a previous run with PID=$2 and started on $3
+appears to have exceeded its 23hr limit. Please check it
+
+Sincerely,
+Yourself
+eof
 }
 
 # List Current Backups
@@ -549,7 +565,7 @@ function Backup()
 	timestamp=${basefolder}/timestamp
 	archive=${basefolder}/${basename}
 	postfix=".tar.gz"
-	ddpostfix="img.gz"
+	ddpostfix=".img.gz"
 	timeoutput=/tmp/timeoutput.${RANDOM}
 
 	# Create Base Folder, if it does not exist
@@ -591,7 +607,7 @@ function Backup()
 					'time' -f "Elapsed %E" -o ${timeoutput} find . -print | egrep -v -f ${exclude} | tar --no-recursion --atime-preserve -czvf ${target} -T -
 					;;
 				"dd")
-					'time' -f "Elapsed %E" -o ${timeputput} dd if=${src} | gzip > ${target}
+					'time' -f "Elapsed %E" -o ${timeoutput} dd if=${src} | gzip > ${target}
 					;;
 				"mysql")
 					'time' -f "Elapsed %E" -o ${timeoutput} MySqlBackup ${target}
@@ -603,6 +619,10 @@ function Backup()
 				ToFile ${tfile} "${msg}"
 
 				CombineAndEmail ejohnfelt "${basename} Backup Completed" ${tfile} ${timeoutput}
+
+				if [ "${mkindex}" = "true" -a "${mode}" = "tar" ]; then
+					gzip -dc ${target} | tar -t > ${basefolder}/.index.${level}
+				fi
 
 				[ -e ${timeoutput} ] && rm ${timeoutput}
 				[ -e ${tfile} ] && rm ${tfile}
@@ -674,6 +694,7 @@ function LoadJobProfile()
 
 	if [ -e $1 ]; then
 		forcelevel=""
+		mkindex="false"
 		unset excludes[*]
 
 		for ((index=0; index < ${#defaultExcludes[@]}; ++index)); do
@@ -717,6 +738,9 @@ function LoadJobProfile()
 				;;
 			"forcelevel")		# Force a level backup
 				forcelevel=${args}
+				;;
+			"index")		# Indexing flag
+				mkindex=${args}
 				;;
 			esac
 		done < $1
@@ -808,15 +832,8 @@ WaitForPrevious
 
 if [ $? = 127 -a ${imterm} = 0 ]; then
 	TMPFILE=/tmp/tmp/${RANDOM}
-	ToFile ${TMPFILE} <<eof
-Hi Eric,
 
-A backup job from a previous run with PID=${pid} and started on ${timestamp}
-appears to have exceeded its 23hr limit. Please check it
-
-Sincerely,
-Yourself
-eof
+	Warning_StillRunningMsg ${TMPFILE} ${pid} ${timestamp}
 
 	SendEmail "Backup job stuck" ejohnfelt ${TMPFILE}
 
