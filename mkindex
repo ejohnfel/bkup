@@ -1,0 +1,27 @@
+#!/bin/bash
+
+src=/srv/backup
+dstname=".index"
+tmp=/tmp/index.tmp.${RANDOM}
+
+# Get List of Archives In Source
+# Input Parameters : [src folder] [file to hold list]
+function GetArchives()
+{
+	find "$1" -print | egrep "(tar.gz|tar)$" "$2"
+}
+
+#
+# Main Loop
+#
+
+GetArchives ${src} ${tmp}
+
+while read archive rem; do
+	# if tar.gz "-zt", if tar then "-t"
+	dst=$(dirname ${archive})
+	tar -zt ${archive} > ${dst}/${dstname}
+done < ${tmp}
+
+[ -e ${tmp} ] && rm ${tmp}
+
