@@ -1,0 +1,277 @@
+#!/bin/bash
+
+version="20160903-1"
+debugmode=0
+
+PATH=${PATH}:/usr/bin
+
+# Globals
+
+declare -a profiles
+declare -a targets
+
+servicename=rbkup
+nfsmount=""
+nfspath=""
+localmnt="/mnt"
+archive="rbkup.tar.gz"
+remotelog=""
+lock="rbkup.lock"
+lockwait=0
+
+#
+# Functions
+#
+
+# Display Usage Menu
+# Input Params : None
+function Usage()
+{
+	echo -e "Remote Backup - ${version} : Usage"
+	echo -e "========================="
+	echo -e "-h\t\tThis Menu"
+	echo -e "-f [profile]\tProfile to load"
+	echo -e "-n [nfs-spec]\tNFS specification, host and mount"
+	echo -e "-p [path]\tNFS Path"
+	echo -e "-m [mnt]\tLocal mount point"
+	echo -e "-a [name]\tName of archive to create"
+	echo -e "-r [host]\tRemote log host"
+	echo -e "-w [time]\tWait for lock"
+	echo -e "-v\t\tShow version"
+	echo -e " "
+	echo -e "A lock wait is more or less a pause for time given, ultimately, locks are ignored."
+	echo -e "You enable a lock, merely by setting the wait time."
+}
+
+# Show Verion Information
+# Input Parameters : None
+function ShowVersion()
+{
+	echo -e "Remote Backup : ${version}"
+}
+
+# MakeLock : Make lock
+# Input Parameter : None
+function MakeLock()
+{
+	if [ ! -e ${localmnt}/${lock} ]; then
+		touch ${localmnt}/${lock}
+	fi
+}
+
+# Clear Lock : Clear a Lock
+# Input Parameters : None
+function ClearLock()
+{
+	[ -e ${localmnt}/${lock} ] && rm ${localmnt}/${lock} > /dev/null
+}
+
+# WaitLock : Wait for backup lock to clear
+function WaitLock()
+{
+	if [ -e ${localmnt}/${lock} -a ! "${lockwait}" = "0" ]; then
+		Log "Lock detected, waiting ${lockwait}"
+		sleep ${lockwait}
+	fi
+}
+
+# CheckRoot
+# Input Parameters : None
+function CheckRoot()
+{
+	if [ ! "${LOGNAME}" = "root" ]; then
+		return 127
+	fi
+
+	return 0
+}
+
+# AddItem : Add item to target list (if it exists)
+# Input Parameters : None
+function AddItem()
+{
+	count=${#targets[@]}
+
+	if [ -f "$1" -o -d "$1" ]; then
+		targets[${count}]=$1
+	fi
+}
+
+# LoadProfile : Load Profile
+# Input Params : profile-filename
+function LoadProfile()
+{
+	while read line; do
+		cmd=$(echo ${line} | cut -d" " -f1)
+		data=$(echo ${line} | cut -d" " -f2-)
+
+		case ${cmd} in
+		"target"|"item"|"file"|"folder") # Target Spec
+			AddItem "${data}" ;;
+		"nfs")			# NFS Spec
+			nfsmount="${data}" ;;
+		"path")			# Path on NFS Mount
+			nfspath="${data}" ;;
+		"mount")		# Local mount
+			localmnt="${data}" ;;
+		"name"|"archive")	# Archive Name
+			archive="${data}" ;;
+		"remote")		# Remote Log Host
+			remotelog="${data}" ;;
+		"wait")			# Lock Wait Time
+			lockwait="${data}" ;;
+		esac
+	done < $1
+}
+
+# Log : Send a message to log(s)
+# Input Parameters : msg
+function Log()
+{
+	logger -p syslog.info -t ${servicename} "$1"
+
+	if [ ! "${remotelog}" = "" ]; then
+		logger -n ${remotelog} -p syslog.info -t ${servicename} "$1"
+	fi
+}
+
+# Mount NFS
+# Input Parameters : None
+function MountNFS()
+{
+	if [ ! -e ${localmnt} ]; then
+		Log "Local mount point does not exist"
+		return 128
+	fi
+
+	mount -t nfs ${nfsmount} ${localmnt} > /dev/null
+
+	retval=$?
+
+	case ${retval} in
+	0)	return 0 ;;
+	32)	return 0 ;;
+	*)	return ${retval} ;;
+	esac
+
+	return 0
+}
+
+# UnmountNFS
+# Input Parameters : None
+function UMountNFS()
+{
+	umount ${localmnt}
+}
+
+# Backup : Conduct Backup
+# Input Parameters: None
+function Backup()
+{
+	tmp=/tmp/targetlist.${RANDOM}
+	for item in ${targets[@]}; do
+		echo "${item}" >> ${tmp}
+	done
+
+	cat ${tmp} | tar --no-recursion --atime-preserve -czvf ${archive} -T -
+
+	[ -e ${tmp} ] && rm ${tmp}
+}
+
+# RemoteBackup : Exactly what it says
+# Input Parameters : None
+function RemoteBackup()
+{
+	MountNFS
+
+	if [ $? = 0 ]; then
+		WaitLock
+
+		[ ! "${lockwait}" = "0" ] && MakeLock
+
+		if [ ! "${nfspath}" = "" ]; then
+			output="${localmnt}/${nfspath}/${archive}"
+		else
+			output="${localmnt}/${archive}"
+		fi
+
+		# Remove Old Image
+		[ -e ${output} ] && rm ${output}
+
+		Log "Starting remote backup $(date)"
+
+		tmpfile=/tmp/tmp.${RANDOM}
+
+		'time' -o ${tmpfile} -f "%E" Backup
+		# 'time' -o ${tmpfile} -f "%E" dd if=${device} | gzip > ${output}
+
+		finalsize=$(du -h ${output} | cut -d" " -f1)
+		runtime=$(cat ${tmpfile})
+
+		rm ${tmpfile}
+
+		Log "Remote backup completed $(date) with runtime ${runtime} and was ${finalsize}"
+
+		[ ! "${lockwait}" = "0" ] && ClearLock
+
+		UMountNFS
+	else
+		Log "Mount of ${nfsmount} to ${localmnt} failed, remote backup cannot continue"
+	fi
+}
+
+#
+# Main Loop
+#
+
+count=0
+
+while [ ! "$1" = "" ]; do
+	case $1 in
+	"-h")	# Usage
+		Usage
+		exit 0 ;;
+	"-f")	# Profile To Load
+		profiles[count]="$2"
+		count=$(( ${count} + 1 ))
+		shift 1 ;;
+	"-n")	# NFS Spec
+		nfsmount="$2"
+		shift 1 ;;
+	"-p")	# NFS Path
+		nfspath="$2"
+		shift 1 ;;
+	"-m")	# Local mount point
+		localmnt="$2"
+		shift 1 ;;
+	"-a")	# Name of Archive to Create
+		archive="$2"
+		shift 1 ;;
+	"-r")	# Remote Log Host
+		remotelog="$2"
+		shift 1 ;;
+	"-v")	# Show Version
+		ShowVersion
+		exit 0 ;;
+	"-w")	# Wait for Lock
+		lockwait="$2"
+		shift 1 ;;
+	*)	AddItem $1 ;;
+	esac
+
+	shift 1
+done
+
+CheckRoot
+
+if [ $? = 0 ]; then
+
+	for profile in ${profiles[@]}; do
+
+		LoadProfile ${profile}
+
+		RemoteBackup
+	done
+else
+	echo -e "You must be root to run this script, you are ${LOGNAME}"
+fi
