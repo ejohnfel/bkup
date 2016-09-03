@@ -168,14 +168,6 @@ function UMountNFS()
 # Input Parameters: None
 function Backup()
 {
-	tmp=/tmp/targetlist.${RANDOM}
-	for item in ${targets[@]}; do
-		echo "${item}" >> ${tmp}
-	done
-
-	cat ${tmp} | tar --no-recursion --atime-preserve -czvf ${archive} -T -
-
-	[ -e ${tmp} ] && rm ${tmp}
 }
 
 # RemoteBackup : Exactly what it says
@@ -202,7 +194,16 @@ function RemoteBackup()
 
 		tmpfile=/tmp/tmp.${RANDOM}
 
-		'time' -o ${tmpfile} -f "%E" Backup
+		tmp=/tmp/targetlist.${RANDOM}
+		for item in ${targets[@]}; do
+			echo "${item}" >> ${tmp}
+		done
+
+		'time' -o ${tmpfile} -f "%E" cat ${tmp} | tar --no-recursion --atime-preserve -czvf ${archive} -T -
+
+		[ -e ${tmp} ] && rm ${tmp}
+
+		# 'time' -o ${tmpfile} -f "%E" Backup
 		# 'time' -o ${tmpfile} -f "%E" dd if=${device} | gzip > ${output}
 
 		finalsize=$(du -h ${output} | cut -d" " -f1)
@@ -230,7 +231,7 @@ while [ ! "$1" = "" ]; do
 	case $1 in
 	"-h")	# Usage
 		Usage
-		exit 0 ;;
+[A		exit 0 ;;
 	"-f")	# Profile To Load
 		profiles[count]="$2"
 		count=$(( ${count} + 1 ))
