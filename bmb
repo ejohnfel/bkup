@@ -180,12 +180,21 @@ function BareMetalBackup()
 
 		'time' -o ${tmpfile} -f "%E" dd if=${device} | gzip > ${output}
 
-		finalsize=$(du -h ${output} | cut -d" " -f1)
-		runtime=$(cat ${tmpfile})
+		if [ -e ${output} ] ; then
+			finalsize=$(du -h ${output} | cut -d" " -f1)
+		else
+			finalsize="Unknown"
+		fi
 
-		rm ${tmpfile}
+		if [ -e ${tmpfile} ]; then
+			runtime=$(cat ${tmpfile})
 
-		Log "Bare metal backup completed $(date) with runtime ${runtime} and was ${finalsize}"
+			rm ${tmpfile}
+
+			Log "Bare metal backup completed on $(date) with runtime ${runtime} and is ${finalsize}"
+		else
+			Log "Bare metal backup completed on ${date} and is ${filesize}"
+		fi
 
 		[ ! "${lockwait}" = "0" ] && ClearLock
 

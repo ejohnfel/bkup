@@ -164,12 +164,6 @@ function UMountNFS()
 	umount ${localmnt}
 }
 
-# Backup : Conduct Backup
-# Input Parameters: None
-function Backup()
-{
-}
-
 # RemoteBackup : Exactly what it says
 # Input Parameters : None
 function RemoteBackup()
@@ -193,25 +187,36 @@ function RemoteBackup()
 		Log "Starting remote backup $(date)"
 
 		tmpfile=/tmp/tmp.${RANDOM}
-
 		tmp=/tmp/targetlist.${RANDOM}
+
 		for item in ${targets[@]}; do
-			echo "${item}" >> ${tmp}
+			if  [ -d ${item} ]; then
+				find ${item} -print >> ${tmp}
+			else
+				echo "${item}" >> ${tmp}
+			fi
 		done
 
-		'time' -o ${tmpfile} -f "%E" cat ${tmp} | tar --no-recursion --atime-preserve -czvf ${archive} -T -
+		[ -e ${tmp} ] && cat ${tmp}
+
+		'time' -f "Elapsed %E" -o ${tmpfile} cat ${tmp} | tar --no-recursion --atime-preserve -czvf ${archive} -T -
 
 		[ -e ${tmp} ] && rm ${tmp}
 
-		# 'time' -o ${tmpfile} -f "%E" Backup
-		# 'time' -o ${tmpfile} -f "%E" dd if=${device} | gzip > ${output}
+		if [ -e ${output} ]; then
+			finalsize=$(du -h ${output} | cut -d" " -f1)
+		else
+			finalsize="an unknown size"
+		fi
 
-		finalsize=$(du -h ${output} | cut -d" " -f1)
-		runtime=$(cat ${tmpfile})
+		if [ -e ${tmpfile} ]; then
+			runtime=$(cat ${tmpfile})
+			rm ${tmpfile}
 
-		rm ${tmpfile}
-
-		Log "Remote backup completed $(date) with runtime ${runtime} and was ${finalsize}"
+			Log "Remote backup completed $(date) with runtime ${runtime} and is ${finalsize}"
+		else
+			Log "Remote backup completed ${date} and seems to have errors"
+		fi
 
 		[ ! "${lockwait}" = "0" ] && ClearLock
 
@@ -231,7 +236,7 @@ while [ ! "$1" = "" ]; do
 	case $1 in
 	"-h")	# Usage
 		Usage
-[A		exit 0 ;;
+		exit 0 ;;
 	"-f")	# Profile To Load
 		profiles[count]="$2"
 		count=$(( ${count} + 1 ))
@@ -266,7 +271,6 @@ done
 CheckRoot
 
 if [ $? = 0 ]; then
-
 	for profile in ${profiles[@]}; do
 
 		LoadProfile ${profile}
