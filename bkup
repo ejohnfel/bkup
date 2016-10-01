@@ -556,7 +556,7 @@ function Backup()
 		return $?
 	fi
 
-	pushd $2 >> /dev/null
+	[ -d $2 ] && pushd $2 >> /dev/null
 
 	include=/tmp/include${RANDOM}.${BASHPID}
 	exclude="/tmp/exclude${RANDOM}.${BASHPID}"
@@ -681,7 +681,7 @@ function Backup()
 	[ -e ${include} ] && rm ${include}
 	[ "$3" = "" ] && rm ${exclude}
 
-	popd >> /dev/null
+	[ -d $2 ] && popd >> /dev/null
 }
 
 # LoadJobProfile : Load Backup Job Profile
