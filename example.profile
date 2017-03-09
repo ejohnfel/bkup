@@ -16,6 +16,10 @@ terminate 0
 # like a tape drive or DVD/CD-R)
 dest /srv/backup
 
+# Mount Command (Can have more then one)
+# Anything mounted, will be unmount when finished
+# mount /dev/sdb5 /mnt
+
 # Source (Folder you'd liked backed up)
 src /tmp
 
