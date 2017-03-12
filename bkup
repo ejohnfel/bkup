@@ -272,7 +272,7 @@ function CheckSpace()
 # Input Params : basename level [output file]
 function GetListing()
 {
-	[ ${debugmode} = 0 ] && echo -e "XXX GetListing... $1 $2 ($3)"
+	DebugMsg "GetListing... $1 $2 ($3)"
 
 	# Tested 8/7/2016
 
@@ -295,6 +295,13 @@ function GetListing()
 			fi
 		fi
 	done
+}
+
+# DebugMsg : Send out debug messages (if debug enabled)
+# Parmeters : Stings to be printed
+function DebugMsg()
+{
+	[ ${debugmode} -gt 0 ] && echo -e "$(date) [debug] : $*"
 }
 
 # Not Implemented Yet Message
@@ -332,7 +339,7 @@ function WaitForPrevious()
 	badmojo=false
 
 	if [ -e ${pidfile} ]; then
-		[ ${debugmode} = 1 ] && echo -e "XXX Previous backup job file exists..."
+		DebugMsg "Previous backup job file exists..."
 
 		ExtractRunInfo
 
@@ -343,7 +350,7 @@ function WaitForPrevious()
 			RemoveRun
 		elif [ ${imterm} = 0 ]; then
 			# Process does exist, start sleep mode
-			[ ${debugmode} = 1 ] && echo -e "XXX Waiting"
+			DebugMsg "Waiting..."
 
 			count=0
 			waitflag=yes
@@ -363,7 +370,7 @@ function WaitForPrevious()
 
 			[ ${badmojo} = true ] && return 127
 		else
-			[ ${debugmode} = 1 ] && echo -e "XXX Terminating now"
+			DebugMsg "Terminating now..."
 			return 127
 		fi
 	fi
@@ -378,17 +385,17 @@ function LiveProcess()
 {
 	# Tested 8/3/2016
 
-	[ ${debugmode} = 1 ] && echo -e "XXX Checking for Live Previous Backup Job"
+	DebugMsg "Checking for Live Previous Backup Job"
 
 	ps -p $1 | grep $1 >> /dev/null
 
 	if [ $? = 0 ]; then
-		[ ${debugmode} = 1 ] && echo -e "XXX Previous backup job *IS* running"
+		DebugMsg "Previous backup job *IS* running"
 
 		return 1
 	fi
 
-	[ ${debugmode} = 1 ] && echo -e "XXX Previous backup job *IS NOT* running"
+	DebugMsg "Previous backup job *IS NOT* running"
 
 	return 0
 }
@@ -398,7 +405,7 @@ function CreateRun()
 {
 	# Tested 8/3/2016
 
-	[ ${debugmode} = 1 ] && echo -e "XXX Creating Run File"
+	DebugMsg "Creating Run File"
 
 	echo "${BASHPID} `date`" > ${pidfile}
 }
@@ -408,7 +415,7 @@ function ExtractRunInfo()
 {
 	# Tested 8/3/2016
 
-	[ ${debugmode} = 1 ] && echo -e "XXX Extracting previous job info"
+	DebugMsg "Extracting previous job info"
 
 	pid=`cat ${pidfile} | cut -d" "  -f1`
 	timestamp=`cat ${pidfile} | cut -d" " -f2-`
@@ -419,7 +426,7 @@ function RemoveRun()
 {
 	# Tested 8/3/2016
 
-	[ ${debugmode} = 1 ] && echo -e "XXX Removing previous run file"
+	DebugMsg "Removing previous run file"
 
 	for tmpfile in /tmp/include*.${pid} /tmp/tmpexclude*.${pid} /tmp/exclude*.${pid}; do
 		[ -e ${tmpfile} ] && rm ${tmpfile}
@@ -432,7 +439,7 @@ function RemoveRun()
 # Input Param : filename size-in-bytes
 function CheckArchiveSize()
 {
-	[ ${debugmode} = 1 ] && echo -e "XXX CheckArchiveSize : $1 ($2)"
+	DebugMsg "CheckArchiveSize : $1 ($2)"
 
 	# Tested 8/7/2016
 
@@ -440,14 +447,14 @@ function CheckArchiveSize()
 		fsize=$(wc -c $1 | cut -d" " -f1)
 
 		if [ ${fsize} -lt $2 ]; then
-			[ ${debugmode} = 1 ] && echo -e "XXX $1 is smaller then $2"
+			DebugMsg "$1 is smaller then $2"
 
 			ls -al $1
 
 			return 127;
 		fi
 	else
-		[ ${debugmode} = 1 ] && echo -e "XXX $1 does not exist"
+		DebugMsg "$1 does not exist"
 
 		return 127
 	fi
@@ -459,7 +466,7 @@ function CheckArchiveSize()
 # Input Param : basename level
 function ResetBackup()
 {
-	[ ${debugmode} = 1 ] && echo -e "XXX ResetBackup : $1"
+	DebugMsg "ResetBackup : $1"
 
 	# Tested 8/7/2016
 
@@ -481,7 +488,7 @@ function ResetBackup()
 # Input Param : basename
 function CheckBackupCycle()
 {
-	[ ${debugmode} = 1 ] && echo -e "XXX CheckBackupCycle : $1"
+	DebugMsg "CheckBackupCycle : $1"
 
 	# Tested 8/7/2016
 
@@ -514,7 +521,7 @@ function Exclude()
 {
 	# Tested 8/3/2016
 
-	[ ${debugmode} = 1 ] && echo -e "XXX Excluding some items... $1, $2, $3"
+	DebugMsg "Excluding some items... $1, $2, $3"
 
 	if [ "$3" = "" ]; then
 		# To Stdout
@@ -553,7 +560,7 @@ function Restore()
 {
 	NotYetTested
 
-	[ ${debugmode} = 1 ] && echo -e "XXX Restore : basename=$1, srcFolder=$2"
+	DebugMsg "Restore : basename=$1, srcFolder=$2"
 
 	if [ ! -e "$2" ]; then
 		mkdir "$2"
@@ -575,7 +582,7 @@ function Restore()
 # Input Params: basename srcFolder forcelevel
 function Backup()
 {
-	[ ${debugmode} = 1 ] && echo -e "XXX Backup : $1 $2 ($3)"
+	DebugMsg "Backup : $1 $2 ($3)"
 
 	NotYetTested
 
@@ -623,7 +630,7 @@ function Backup()
 		if [ ! -e ${target} -o -e ${target} -a ${maxlevel} -eq 1 ]; then
 			if [ ${level} = 0 ]; then
 				# Full Backup
-				[ ${debugmode} = 1 ] && echo -e "XXX Full Backup"
+				DebugMsg "Executing Full Backup"
 
 				ResetBackup ${basename}
 
@@ -643,6 +650,8 @@ function Backup()
 				"mysql")
 					'time' -f "Elapsed %E" -o ${timeoutput} MySqlBackup ${target}
 					;;
+				"cp")	'time' -f "Elapsed %E" -o ${timeoutput} cp "${src}" "${target}"
+					;;
 				esac
 
 				msg="Full backup ${basename} completed on $(date)"
@@ -661,7 +670,7 @@ function Backup()
 				break
 			elif [ ${level} -gt 0 -a "${mode}" = "tar" ]; then
 				# Incremental
-				[ ${debugmode} = 1 ] && echo -e "XXX Incremental Backup"
+				DebugMsg "Incremental Backup"
 
 				logger -p syslog.info -t bkup "Incremental backup ${basename} started on $(date)"
 
@@ -721,7 +730,7 @@ function Backup()
 # Input Parameter : filename operation
 function LoadJobProfile()
 {
-	[ ${debugmode} = 1 ] && echo -e "XXX LoadJobProfile : $1 $2"
+	DebugMsg "LoadJobProfile : $1 $2"
 
 	NotYetTested
 
@@ -800,7 +809,7 @@ function LoadJobProfile()
 # Input Parameters : target
 function MySqlBackup()
 {
-	[ ${debugmode} = 1 ] && echo -e "XXX MySql Backup : $1"
+	DebugMsg "MySql Backup : $1"
 
 	NotYetTested
 
