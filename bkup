@@ -301,7 +301,7 @@ function GetListing()
 # Parmeters : Stings to be printed
 function DebugMsg()
 {
-	[ ${debugmode} -gt 0 ] && echo -e "$(date) [debug] : $*"
+	[ ${debugmode} -gt 0 ] && echo -e "$(date) [debug] : $*" | tee -a /tmp/bkup.debug.log
 }
 
 # Not Implemented Yet Message
@@ -495,7 +495,10 @@ function CheckBackupCycle()
 	previouslevel=$(( ${maxlevel} - 1 ))
 
 	if [ -e ${bkupPath}/$1/$1${previouslevel}.tar.gz ]; then
+		DebugMsg "Resetting : $1"
 		ResetBackup $1
+	else
+		DebugMsg "Not Resetting : $1"
 	fi
 }
 
@@ -537,6 +540,7 @@ function Exclude()
 function Mount()
 {
 	for ((index=0; index < ${#mounts[@]}; ++index)) do
+		DebugMsg "Mounting ${mounts[${index}]} ..."
 		IFS=" " read mnt mntpoint <<< ${mounts[${index}]}
 
 		mount ${mnt} ${mntpoint}
@@ -548,6 +552,7 @@ function Mount()
 function Unmount()
 {
 	for ((index=0; index < ${#mounts[@]}; ++index)) do
+		DebugMsg "Unmounting ${mounts[${index}]} ..."
 		IFS=" " read mnt mntpoint <<< ${mounts[${index}]}
 
 		umount ${mnt} ${mntpoint}
@@ -621,13 +626,17 @@ function Backup()
 	ArrayToFile ${exclude} ${excludes[@]}
 
 	for ((level=0; level < ${maxlevel}; ++level)); do
+		DebugMsg "${level}"
 		if [ "${mode}" = "dd" ]; then
 			target=${archive}${level}${ddpostfix}
 		else
 			target=${archive}${level}${postfix}
 		fi
 
+		DebugMsg "${target}"
+
 		if [ ! -e ${target} -o -e ${target} -a ${maxlevel} -eq 1 ]; then
+			DebugMsg "Last check before backup"
 			if [ ${level} = 0 ]; then
 				# Full Backup
 				DebugMsg "Executing Full Backup"
@@ -706,7 +715,8 @@ function Backup()
 				break
 			fi
 		elif [ ${level} -gt 1 -a -e ${target} ]; then
-			# Here we check for incrementals that are out of sequence (that is, they older then the previous backup)
+			DebugMsg "Checking for out of sequence differentials"
+			# Here we check for incrementals that are out of sequence (that is, they're older then the previous backup)
 			# If found, we delete it and start at this level to create fresh one.
 			previous=$(( ${level} - 1 ))
 
