@@ -567,11 +567,11 @@ function Restore()
 
 	DebugMsg "Restore : basename=$1, srcFolder=$2"
 
-	if [ ! -e "$2" ]; then
+	if [ ! -d "$2" ]; then
 		mkdir "$2"
 	fi
 
-	pushd $2 >> /dev/null
+	pushd "$2" >> /dev/null
 
 	# Restore In Order
 	for ((postfix=0; postfix < ${maxlevel}; ++postfix)); do
@@ -756,13 +756,10 @@ function LoadJobProfile()
 
 		count=${#excludes[@]}
 
-		while read line; do
-			cmd=$(echo ${line} | cut -d" " -f1)
-			args=$(echo ${line} | cut -d" " -f2)
-
+		while read cmd args; do
 			case ${cmd} in
 			"jobname"|"name")	# Job name (or, basename)
-				jobname=${args}
+				jobname="${args}"
 				;;
 			"mode")			# Mode is either "tar" or "dd" to indicate type of backup
 				mode=${args}
@@ -774,10 +771,10 @@ function LoadJobProfile()
 				imterm=${args}
 				;;
 			"dest")			# Where backups go
-				bkupPath=${args}
+				bkupPath="${args}"
 				;;
 			"src")			# What to backup
-				src=${args}
+				src="${args}"
 				;;
 			"media")		# Recordable Media
 				media=${args}
@@ -787,7 +784,7 @@ function LoadJobProfile()
 				count=$(( ${count} + 1 ))
 				;;
 			"operation")
-				operation=${args}
+				operation="${args}"
 				;;
 			"forcelevel")		# Force a level backup
 				forcelevel=${args}
@@ -799,17 +796,18 @@ function LoadJobProfile()
 				mounts[${#mounts[@]}]="${args}"
 				;;
 			esac
-		done < $1
+		done < "$1"
 	else
 		echo -e "Job Profile, $1, does not exist, or is not where you think it should be"
 		return 127
 	fi
 
 	if [ $2 = 0 ]; then
-		echo -e "XXX ${jobname}"
-		Backup ${jobname} ${src} ${forcelevel}
+		DebugMsg "Running Backup Job : ${jobname}"
+		Backup "${jobname}" "${src}" ${forcelevel}
 	else
-		Restore ${jobname}
+		DebugMsg "Running Restore Job : ${jobname}"
+		Restore "${jobname}" "${src}"
 	fi
 
 	return 0
