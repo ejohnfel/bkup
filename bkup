@@ -1,12 +1,14 @@
 #!/bin/bash
 
-notifyGreeting="Eric"
+notifyGreeting="Hello"
+
+defaultemail=root			# Default email address for notices and log messages
 
 pidfile=/var/run/bkup.pid		# PID file for running process
 pid=""					# For /var/run/pidfile pid value
 timestamp=""				# For /var/run/pidfile timestamp
 
-debugmode=1				# Debug mode flag 0 = off, 1 = on
+debugmode=0				# Debug mode flag 0 = off, 1 = on
 operation=0				# Operation (0=Backup, 1=Restore)
 mode=tar				# Mode (tar, dd)
 maxlevel=7				# Maximum Backup Level
@@ -64,6 +66,7 @@ function Usage()
 	echo -e "bkup -t [jobname]\t\tList contents of supplied backup archive"
 	echo -e "bkup -m [level]\t\t\tSet backup cycle's max level, default is 7"
 	echo -e "bkup -mnt [dev] [mntpoint]\tMount device"
+	echo -e "bkup -dbg\t\t\t\tEnter Debug mode"
 	echo -e ""
 	echo -e "Operation can be..."
 	echo -e "Backup\t\t0|backup|-b"
@@ -91,6 +94,16 @@ appears to have exceeded its 23hr limit. Please check it
 Sincerely,
 Yourself
 eof
+}
+
+# Logging
+function Log()
+{
+	logger -p syslog.info "${1}"
+
+	if [ "${2}" != "" ]; then
+		SendEmail "${defaultemail}" "Message from bkup" "${1}"
+	fi
 }
 
 # List Current Backups
@@ -308,7 +321,7 @@ function DebugMsg()
 function NotImplementedYet()
 {
 	# Tested 7/31/2016
-	echo -e "*** Not Implemented Yet"
+	DbugMsg "*** Not Implemented yet : ${*}"
 }
 
 # Because I'm Forgetful
@@ -321,7 +334,7 @@ function NotYetImplemented()
 function NotYetTested()
 {
 	# Tested 7/31/2016
-	echo -e "*** Not Yet Tested"
+	DebugMsg "*** Not Yet Tested : ${*}"
 }
 
 # Because I'm Forgetful
@@ -539,12 +552,16 @@ function Exclude()
 # Parameters : None (expects ${mounts} to be populated)
 function Mount()
 {
+	success=1
+
 	for ((index=0; index < ${#mounts[@]}; ++index)) do
 		DebugMsg "Mounting ${mounts[${index}]} ..."
 		IFS=" " read mnt mntpoint <<< ${mounts[${index}]}
 
-		mount ${mnt} ${mntpoint}
+		[ mount ${mnt} ${mntpoint} ] && success=0
 	done
+
+	return ${success}
 }
 
 # Unmount : Unmount all mounts from mount list
@@ -591,7 +608,11 @@ function Backup()
 
 	NotYetTested
 
-	[ ${#mounts[@]} -gt 0 ] && Mount
+	success=0
+
+	[ ${#mounts[@]} -gt 0 ] && Mount && success=1
+
+	[ ${success} -gt 0 ] && return ${success}
 
 	if [ ${mode} = iso ]; then
 		BurnFiles ${media} $2
@@ -795,6 +816,9 @@ function LoadJobProfile()
 			"mount")		# Mounts
 				mounts[${#mounts[@]}]="${args}"
 				;;
+			"email")		# Who to email
+				defaultemail="${args}"
+				;;
 			esac
 		done < "$1"
 	else
@@ -805,6 +829,10 @@ function LoadJobProfile()
 	if [ $2 = 0 ]; then
 		DebugMsg "Running Backup Job : ${jobname}"
 		Backup "${jobname}" "${src}" ${forcelevel}
+
+		if [ $? -gt 0 ]; then
+
+		fi
 	else
 		DebugMsg "Running Restore Job : ${jobname}"
 		Restore "${jobname}" "${src}"
@@ -870,6 +898,9 @@ while [ ! "$1" = "" ]; do
 		mounts[${#mounts[@]}]="${2} ${3}"
 		shift 2
 		;;
+	"-dbg") # Enter Debug Mode
+		debugmode=1
+		;;
 	"test")
 		echo -e "Does nothing at the moment"
 		exit 0
@@ -893,7 +924,7 @@ if [ $? = 127 -a ${imterm} = 0 ]; then
 
 	Warning_StillRunningMsg ${TMPFILE} ${pid} ${timestamp}
 
-	SendEmail "Backup job stuck" ejohnfelt ${TMPFILE}
+	SendEmail "${defaultemail}" "Backup job stuck" ${TMPFILE}
 
 	rm ${TMPFILE}
 
