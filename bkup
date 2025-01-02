@@ -582,6 +582,8 @@ function Restore()
 {
 	NotYetTested
 
+	success=1
+
 	DebugMsg "Restore : basename=$1, srcFolder=$2"
 
 	if [ ! -d "$2" ]; then
@@ -594,10 +596,15 @@ function Restore()
 	for ((postfix=0; postfix < ${maxlevel}; ++postfix)); do
 		if [ -e ${bkupPath}/$1/$1${postfix}.tar.gz ]; then
 			tar xzvf ${bkupPath}/$1/$1${postfix}.tar.gz
+
+			[ $? -ne 0 ] && break
+			[ $? -eq 0 ] && success=0
 		fi
 	done
 
 	popd >> /dev/null
+
+	return success
 }
 
 # Backup Item
@@ -828,14 +835,22 @@ function LoadJobProfile()
 
 	if [ $2 = 0 ]; then
 		DebugMsg "Running Backup Job : ${jobname}"
+		Log "Running backup job : ${jobname}"
+
 		Backup "${jobname}" "${src}" ${forcelevel}
 
 		if [ $? -gt 0 ]; then
-
+			Log "Starting job ${jobname} failed..." yes
 		fi
 	else
 		DebugMsg "Running Restore Job : ${jobname}"
+		Log "Running restore job : ${jobname}"
+
 		Restore "${jobname}" "${src}"
+
+		if [ $? -gt 0 ]; then
+			Log "Starting job ${jobname} failed..." yes
+		fi
 	fi
 
 	return 0
